@@ -1,0 +1,7 @@
+Format: https://debian.org
+Upstream-Name: storebackup-on-nfs-server
+
+Files: *
+Copyright: 2026 Marcel Hüttenberger <papachaotica@users.noreply.github.com>
+License: GPL-3+
+

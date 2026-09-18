@@ -1,0 +1,6 @@
+storebackup-on-nfs-server (0.2.0-1) UNRELEASED; urgency=medium
+
+  * Initial release
+  * Added hourly cronjob and disabled daily cronjob
+
+ -- Marcel Hüttenberger <papachaotica@users.noreply.github.com>  Fri, 18 Sep 2026 10:45:00 +0200

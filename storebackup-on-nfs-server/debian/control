@@ -1,0 +1,16 @@
+Source: storebackup-on-nfs-server
+Section: admin
+Priority: optional
+Maintainer: Marcel Hüttenberger <papachaotica@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+
+Package: storebackup-on-nfs-server
+Architecture: all
+Depends: ${misc:Depends}, storebackup, nfs-common, iputils-ping, ethtool
+Recommends: wakeonlan
+Description: Generic guarded StoreBackup client for NFS backup servers
+ Replace the daily storebackup with an hourly script that checks if an NFS
+ server is reachable and stores the backup there—likewise only on a daily
+ basis. After 7 days without a successful backup (configurable), the server
+ is woken up via Wake-on-LAN.

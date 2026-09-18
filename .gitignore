@@ -1,0 +1,8 @@
+*.deb
+*.buildinfo
+*.changes
+storebackup-on-nfs-server/debian/.debhelper/**
+storebackup-on-nfs-server/debian/debhelper-build-stamp
+storebackup-on-nfs-server/debian/storebackup-on-nfs-server/**
+storebackup-on-nfs-server/debian/storebackup-on-nfs-server.substvars
+

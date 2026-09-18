@@ -1,0 +1,213 @@
+#!/bin/bash
+#
+# Stündlicher StoreBackup-Lauf über asr.lan.
+# Ein neues Backup startet frühestens 24 Stunden nach dem letzten Erfolg.
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+umask 077
+
+STOREBACKUP=/usr/bin/storeBackup
+CONFIG_DIR=/etc/storebackup.d
+
+SERVER_IP=192.168.1.10
+NFS_SOURCE=asr.lan:/mnt/backup
+MOUNTPOINT=/net/backup
+REMOTE_LOCK=/net/backup/storebackup.lock
+
+STATE_DIR=/var/spool/storeback-on-nfs-server
+LAST_SUCCESS_FILE=$STATE_DIR/last-success
+LAST_WOL_FILE=$STATE_DIR/last-wol
+
+# Bei Bedarf anpassen:
+MIN_SUCCESS_INTERVAL_SECONDS=$((24 * 60 * 60))
+MAX_SUCCESS_INTERVAL_SECONDS=$((7 * 24 * 60 * 60))
+WOL_COOLDOWN_SECONDS=$((60 * 60))
+
+WOL_MAC=D0:50:99:C1:5A:E7
+ADMIN_ADDRESS=papachaotica@gmail.com
+
+mounted_by_script=0
+tmplog=
+
+log() {
+    logger -t storeback -- "$*"
+    printf '%s\n' "$*" >&2
+}
+
+send_mail() {
+    local subject=$1
+    local body=$2
+
+    if ! /usr/sbin/sendmail -t <<EOF
+To: $ADMIN_ADDRESS
+Subject: [storeback $(hostname -s)] $subject
+Auto-Submitted: auto-generated
+Content-Type: text/plain; charset=UTF-8
+
+$body
+EOF
+    then
+        log "WARNUNG: E-Mail-Benachrichtigung konnte nicht an $ADMIN_ADDRESS übergeben werden."
+    fi
+}
+
+read_timestamp() {
+    local file=$1
+    local value
+
+    value=$(cat "$file" 2>/dev/null || true)
+
+    if [[ $value =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$value"
+    else
+        printf '0\n'
+    fi
+}
+
+write_timestamp() {
+    local file=$1
+    local now
+    local temporary
+
+    now=$(date +%s)
+    temporary=$(mktemp "$STATE_DIR/.timestamp.XXXXXXXX") || return 1
+
+    printf '%s\n' "$now" > "$temporary" &&
+        mv -f "$temporary" "$file"
+}
+
+cleanup() {
+    local rc=$?
+
+    [ -n "$tmplog" ] && rm -f "$tmplog"
+
+    # Nur einen Mount aushängen, den dieser Lauf selbst erstellt hat.
+    if [ "$mounted_by_script" -eq 1 ]; then
+        if ! umount "$MOUNTPOINT"; then
+            log "WARNUNG: Selbst angelegter Mount $MOUNTPOINT konnte nicht ausgehängt werden."
+            [ "$rc" -eq 0 ] && rc=1
+        fi
+    fi
+
+    exit "$rc"
+}
+trap cleanup EXIT
+
+[ -x "$STOREBACKUP" ] || exit 0
+
+mkdir -p "$STATE_DIR" "$MOUNTPOINT" || exit 1
+
+# Cron darf niemals zwei Sicherungen gleichzeitig starten.
+exec 9>/run/lock/storeback.lock
+flock -n 9 || exit 0
+
+now=$(date +%s)
+last_success=$(read_timestamp "$LAST_SUCCESS_FILE")
+last_wol=$(read_timestamp "$LAST_WOL_FILE")
+age=$((now - last_success))
+
+# Ein erfolgreiches Backup liegt noch keine 24 Stunden zurück.
+if [ "$last_success" -gt 0 ] &&
+   [ "$age" -lt "$MIN_SUCCESS_INTERVAL_SECONDS" ]; then
+    exit 0
+fi
+
+# Server offline: erst nach dem Maximalabstand WOL auslösen.
+if ! ping -c 1 -W 2 "$SERVER_IP" >/dev/null 2>&1; then
+    log "Server $SERVER_IP nicht erreichbar; Backup wird später erneut versucht."
+
+    if [ "$age" -ge "$MAX_SUCCESS_INTERVAL_SECONDS" ] &&
+       [ $((now - last_wol)) -ge "$WOL_COOLDOWN_SECONDS" ]; then
+        if wakeonlan "$WOL_MAC"; then
+            write_timestamp "$LAST_WOL_FILE" ||
+                log "WARNUNG: WOL-Zeitstempel konnte nicht gespeichert werden."
+
+            log "WOL für $SERVER_IP gesendet."
+            send_mail "WARNUNG: WOL ausgelöst" \
+                "Seit mindestens sieben Tagen gab es kein erfolgreiches Backup.
+WOL wurde für $SERVER_IP gesendet."
+        else
+            log "FEHLER: WOL für $SERVER_IP konnte nicht gesendet werden."
+            send_mail "FEHLER: WOL fehlgeschlagen" \
+                "Seit mindestens sieben Tagen gab es kein erfolgreiches Backup.
+Das WOL-Paket für $SERVER_IP konnte nicht gesendet werden."
+        fi
+    fi
+
+    exit 0
+fi
+
+# Bestehenden Mount nur verwenden, nie verändern oder aushängen.
+if mountpoint -q "$MOUNTPOINT"; then
+    mount_fstype=$(findmnt -rn -T "$MOUNTPOINT" -o FSTYPE)
+    mount_source=$(findmnt -rn -T "$MOUNTPOINT" -o SOURCE)
+
+    case "$mount_fstype:$mount_source" in
+        nfs*:*:/mnt/backup)
+            ;;
+        *)
+            log "FEHLER: $MOUNTPOINT ist nicht das erwartete NFS-Ziel ($mount_fstype: $mount_source)."
+            send_mail "FEHLER: Unerwarteter Mount" \
+                "$MOUNTPOINT ist bereits eingehängt, aber nicht als erwartetes NFS-Ziel:
+$mount_fstype: $mount_source"
+            exit 1
+            ;;
+    esac
+else
+    if ! timeout 30 mount -t nfs "$NFS_SOURCE" "$MOUNTPOINT"; then
+        log "FEHLER: NFS-Mount $NFS_SOURCE nach $MOUNTPOINT fehlgeschlagen."
+        send_mail "FEHLER: NFS-Mount fehlgeschlagen" \
+            "Der Server war erreichbar, aber $NFS_SOURCE konnte nicht nach $MOUNTPOINT eingehängt werden."
+        exit 1
+    fi
+
+    mounted_by_script=1
+fi
+
+# Fremde Remote-Sperre respektieren und im nächsten Stundenlauf erneut prüfen.
+if [ -e "$REMOTE_LOCK" ]; then
+    log "Remote-Sperre $REMOTE_LOCK vorhanden; kein Backup gestartet."
+    exit 0
+fi
+
+configs=$(run-parts --list "$CONFIG_DIR")
+
+if [ -z "$configs" ]; then
+    log "FEHLER: Keine StoreBackup-Konfiguration in $CONFIG_DIR gefunden."
+    send_mail "FEHLER: Keine StoreBackup-Konfiguration" \
+        "In $CONFIG_DIR wurde keine Konfiguration gefunden."
+    exit 1
+fi
+
+tmplog=$(mktemp -t storebackup.XXXXXXXXXX) || exit 1
+delayed_error=0
+
+for file in $configs; do
+    {
+        printf '\n===== %s =====\n' "$file"
+        nice "$STOREBACKUP" -f "$file"
+    } >>"$tmplog" 2>&1 || delayed_error=1
+done
+
+if [ "$delayed_error" -ne 0 ]; then
+    log "FEHLER: Mindestens eine StoreBackup-Konfiguration ist fehlgeschlagen."
+    cat "$tmplog" >&2
+    send_mail "FEHLER: StoreBackup fehlgeschlagen" \
+        "Mindestens eine StoreBackup-Konfiguration ist fehlgeschlagen.
+
+Ausgabe:
+$(cat "$tmplog")"
+    exit 1
+fi
+
+if ! write_timestamp "$LAST_SUCCESS_FILE"; then
+    log "FEHLER: Backup war erfolgreich, aber der Erfolgstimestamp konnte nicht gespeichert werden."
+    send_mail "FEHLER: Erfolg konnte nicht gespeichert werden" \
+        "StoreBackup war erfolgreich, aber $LAST_SUCCESS_FILE konnte nicht aktualisiert werden."
+    exit 1
+fi
+
+log "StoreBackup erfolgreich abgeschlossen."
+send_mail "Backup erfolgreich" \
+    "StoreBackup wurde erfolgreich abgeschlossen.
+Der nächste Backup-Versuch erfolgt frühestens in 24 Stunden."

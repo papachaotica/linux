@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure"  ]; then
+    if [ -f /etc/cron.daily/storebackup  ]; then
+        chmod -x /etc/cron.daily/storebackup
+    fi
+fi
+
+#DEBHELPER#
+exit 0

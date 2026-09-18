@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if [ -f /etc/cron.daily/storebackup ]; then
+        chmod +x /etc/cron.daily/storebackup
+    fi
+    rm -rf /var/spool/storebackup-on-nfs-server
+fi
+
+#DEBHELPER#
+exit 0
+
