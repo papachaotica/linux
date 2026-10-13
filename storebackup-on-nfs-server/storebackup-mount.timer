@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily StoreBackup start with hourly retry on failure
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+AccuracySec=1min
+Unit=storebackup-mount.service
+
+[Install]
+WantedBy=timers.target

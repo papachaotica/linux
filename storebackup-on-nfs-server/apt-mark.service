@@ -1,0 +1,3 @@
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'tmp=$$(mktemp /root/.manual-packages.txt.XXXXXX) && trap "rm -f $$tmp" EXIT && apt-mark showmanual | sort > "$$tmp" && mv "$$tmp" /root/manual-packages.txt'

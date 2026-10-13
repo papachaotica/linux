@@ -1,0 +1,12 @@
+# /etc/systemd/system/manual-packages.timer
+[Unit]
+Description=Tägliche Aktualisierung der Paketliste
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+AccuracySec=1h
+Unit=apt-mark.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=StoreBackup via controlled NFS mount
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/storeBackupMount -f /etc/storeBackupMount.asus-prime-8360m-c.conf
+
+# Bei nicht erreichbarem Server oder Backupfehler nach einer Stunde erneut.
+# Bei Exit 0 gibt es keinen weiteren Start bis zum täglichen Timertermin.
+Restart=on-failure
+RestartSec=1h
+
+# Begrenzt einen normalen, zu lange laufenden Backupversuch.
+TimeoutStartSec=6h
+
+Nice=19
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
